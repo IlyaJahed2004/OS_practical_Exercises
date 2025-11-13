@@ -130,3 +130,32 @@ void *download_part(void *arg) {
 
     return NULL; // Thread returns nothing
 }
+
+
+
+
+// Function to merge all downloaded parts into one final file
+void merge_files(const char *filename, int num_parts) {
+    FILE *final = fopen(filename, "wb");   // Open final output file
+    char part_name[64];
+    FILE *part;
+    char buffer[8192];                     // Temporary buffer for data transfer
+    size_t n;
+
+    // Loop through all parts in correct order
+    for (int i = 0; i < num_parts; i++) {
+        sprintf(part_name, "part_%d.bin", i);   // Build part filename (e.g., part_0.bin)
+        part = fopen(part_name, "rb");          // Open part file for reading
+
+        // Read from part and write into final file
+        while ((n = fread(buffer, 1, sizeof(buffer), part)) > 0)
+            fwrite(buffer, 1, n, final);
+
+        fclose(part);       // Close part file
+        remove(part_name);  // Delete part file after merging
+    }
+
+    fclose(final); // Close final merged file
+}
+
+
