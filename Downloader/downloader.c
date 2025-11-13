@@ -159,3 +159,59 @@ void merge_files(const char *filename, int num_parts) {
 }
 
 
+
+
+int main(int argc, char *argv[]) {
+    // Check for correct number of arguments
+    if (argc < 3) {
+        printf("Usage: %s <url> <num_threads>\n", argv[0]);
+        return 1;
+    }
+
+    const char *url = argv[1];         // File URL
+    int num_threads = atoi(argv[2]);   // Number of threads to use
+
+    // Limit threads to MAX_THREADS
+    if (num_threads > MAX_THREADS)
+        num_threads = MAX_THREADS;
+
+    // Initialize CURL globally
+    curl_global_init(CURL_GLOBAL_ALL);
+
+    // Get total file size from server
+    long filesize = get_file_size(url);
+    printf("File size: %ld bytes\n", filesize);
+
+    // Calculate the size of each part
+    long part_size = filesize / num_threads;
+
+    pthread_t threads[MAX_THREADS];
+    struct ThreadData tdata[MAX_THREADS];
+
+    // Create threads for each part
+    for (int i = 0; i < num_threads; i++) {
+        tdata[i].start = i * part_size;
+        tdata[i].end = (i == num_threads - 1) ? filesize : (i + 1) * part_size;
+        strcpy(tdata[i].url, url);
+        tdata[i].part_no = i;
+
+        pthread_create(&threads[i], NULL, download_part, &tdata[i]);
+    }
+
+    // Wait for all threads to complete
+    for (int i = 0; i < num_threads; i++)
+        pthread_join(threads[i], NULL);
+
+    // Merge all downloaded parts into one final file
+    merge_files("output_file", num_threads);
+
+    printf("Download complete!\n");
+
+    // Clean up CURL resources
+    curl_global_cleanup();
+
+    return 0;
+}
+
+
+
