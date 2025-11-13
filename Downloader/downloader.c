@@ -61,3 +61,72 @@ long get_file_size(const char *url) {
 
     return (long)filesize; // Return file size (or -1 if failed)
 }
+
+
+
+void *download_part(void *arg) {
+    struct ThreadData *data = (struct ThreadData *)arg;
+    CURL *curl = curl_easy_init();
+    FILE *fp;
+    char range[64], outname[64];
+
+    sprintf(outname, "part_%d.bin", data->part_no);
+    fp = fopen(outname, "wb");
+
+    sprintf(range, "%ld-%ld", data->start, data->end - 1);
+
+    if(curl) {
+        curl_easy_setopt(curl, CURLOPT_URL, data->url);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, NULL);
+        curl_easy_setopt(curl, CURLOPT_RANGE, range);
+        curl_easy_perform(curl);
+        curl_easy_cleanup(curl);
+    }
+
+    fclose(fp);
+    printf("Thread %d downloaded bytes %ld-%ld\n", data->part_no, data->start, data->end - 1);
+    return NULL;
+}
+
+
+
+// Function to download a specific byte range of a file (used by each thread)
+void *download_part(void *arg) {
+    struct ThreadData *data = (struct ThreadData *)arg;  // Cast argument to ThreadData
+    CURL *curl = curl_easy_init();                       // Initialize CURL handle
+    FILE *fp;
+    char range[64], outname[64];
+
+    // Create output filename like "part_0.bin"
+    sprintf(outname, "part_%d.bin", data->part_no);
+    fp = fopen(outname, "wb");
+
+    // Define the byte range to download (e.g., "0-999")
+    sprintf(range, "%ld-%ld", data->start, data->end - 1);
+
+    if (curl) {
+        // Set file URL
+        curl_easy_setopt(curl, CURLOPT_URL, data->url);
+
+        // Set output file pointer
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
+
+        // Use default write callback
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, NULL);
+
+        // Specify byte range for partial download
+        curl_easy_setopt(curl, CURLOPT_RANGE, range);
+
+        // Perform the request
+        curl_easy_perform(curl);
+
+        // Clean up CURL resources
+        curl_easy_cleanup(curl);
+    }
+
+    fclose(fp); // Close output file
+    printf("Thread %d downloaded bytes %ld-%ld\n", data->part_no, data->start, data->end - 1);
+
+    return NULL; // Thread returns nothing
+}
