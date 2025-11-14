@@ -5,12 +5,19 @@
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
+#include <dirent.h>   // Needed for opendir(), readdir(), closedir()
 
 // Structure that will later be passed to each thread
 typedef struct {
     char *path;    // Starting directory path
     char *target;  // Target filename to search for
 } thread_arg_t;
+
+
+// Function prototype for directory listing
+void search_dir(const char *path);
+
+
 
 int main(int argc, char *argv[]) {
 
@@ -45,9 +52,39 @@ int main(int argc, char *argv[]) {
     printf("Root path prepared: %s\n", root_arg->path);
     printf("Target filename: %s\n", root_arg->target);
 
+    //call directory listing function ---
+    search_dir(root_arg->path);
+
     // Free allocated memory (later this will be handled differently)
     free(root_arg->path);
     free(root_arg);
 
     return 0;
+}
+
+
+
+// List the content of a directory (no recursion, no threads)
+void search_dir(const char *path) {
+    
+    // Try to open the directory using opendir()
+    DIR *dir = opendir(path);
+    if (!dir) {
+        // fprintf to stderr → print an error message (stderr = standard error output)
+        fprintf(stderr, "Error: cannot open directory: %s\n", path);
+        return;
+    }
+
+    printf("Listing directory: %s\n", path);
+
+    struct dirent *entry;
+
+    // readdir(dir) returns the next entry inside the directory
+    // returns NULL when there are no more entries
+    while ((entry = readdir(dir)) != NULL) {
+        printf(" - %s\n", entry->d_name);
+    }
+
+    // close the directory to free system resources
+    closedir(dir);
 }
