@@ -78,7 +78,7 @@ void *thread_func(void *arg) {
 
 
 
-void search_dir(const char *path, const char *target) {
+vvoid search_dir(const char *path, const char *target) {
 
     DIR *dir = opendir(path);
     if (!dir) {
@@ -88,6 +88,11 @@ void search_dir(const char *path, const char *target) {
 
     struct dirent *entry;
 
+    // dynamic array to store child thread IDs
+    pthread_t *child_threads = NULL;
+    size_t child_count = 0;
+    size_t child_cap = 0;
+
     while ((entry = readdir(dir)) != NULL) {
 
         // Skip "." and ".."
@@ -96,39 +101,80 @@ void search_dir(const char *path, const char *target) {
 
         // Build full path
         char newpath[1024];
-        snprintf(newpath, sizeof(newpath), "%s/%s", path, entry->d_name);
+        if (snprintf(newpath, sizeof(newpath), "%s/%s", path, entry->d_name) < 0)
+            continue;
 
         // Get info about the entry
         struct stat st;
         if (stat(newpath, &st) != 0)
             continue;
 
-        //If it's a file → check match
-        if (S_ISREG(st.st_mode)) {           // Is normal file?
+        // If it's a file → check match
+        if (S_ISREG(st.st_mode)) {
             if (strcmp(entry->d_name, target) == 0) {
                 printf("FOUND: %s\n", newpath);
             }
         }
 
+        // If it's a directory → spawn a child thread
         if (S_ISDIR(st.st_mode)) {
 
-            // 1) allocate memory for new thread argument
+            // prepare argument for child thread
             thread_arg_t *child_arg = malloc(sizeof(thread_arg_t));
+            if (!child_arg) {
+                fprintf(stderr, "Out of memory when allocating thread arg for %s\n", newpath);
+                continue;
+            }
 
-            // 2) fill it
             child_arg->path = strdup(newpath);
-            child_arg->target = target;
+            if (!child_arg->path) {
+                fprintf(stderr, "Out of memory (strdup) for %s\n", newpath);
+                free(child_arg);
+                continue;
+            }
+            child_arg->target = (char *)target;
 
-            // 3) create a new thread
+            // create the child thread
             pthread_t tid;
-            pthread_create(&tid, NULL, thread_func, child_arg);
+            int rc = pthread_create(&tid, NULL, thread_func, child_arg);
+            if (rc != 0) {
+                // creation failed → cleanup and continue
+                fprintf(stderr, "pthread_create failed for %s: %s\n", newpath, strerror(rc));
+                free(child_arg->path);
+                free(child_arg);
+                continue;
+            }
 
+            // ensure capacity and store tid
+            if (child_count + 1 > child_cap) {
+                size_t new_cap = child_cap == 0 ? 8 : child_cap * 2;
+                pthread_t *tmp = realloc(child_threads, new_cap * sizeof(pthread_t));
+                if (!tmp) {
+                    // realloc failed — we cannot track this child for join (child still runs)
+                    // warn and continue without storing tid (child will clean its own arg)
+                    fprintf(stderr, "Warning: realloc failed, cannot track child thread for %s\n", newpath);
+                    // we keep child_threads as-is (maybe NULL) and do not increment child_count
+                } else {
+                    child_threads = tmp;
+                    child_cap = new_cap;
+                }
+            }
+
+            if (child_count < child_cap) {
+                child_threads[child_count++] = tid;
+            }
         }
-
     }
 
+    // After scanning the directory, join all child threads that we recorded.
+    for (size_t i = 0; i < child_count; ++i) {
+        pthread_join(child_threads[i], NULL);
+    }
+
+    free(child_threads);
     closedir(dir);
 }
+
 
 
 
