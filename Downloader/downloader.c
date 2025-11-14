@@ -1,8 +1,8 @@
-#include <stdio.h>      // Standard input/output functions (printf, fopen, etc.)
-#include <stdlib.h>     // General-purpose utilities (malloc, atoi, etc.)
-#include <string.h>     // String handling functions (strcpy, strlen, etc.)
-#include <pthread.h>    // POSIX threads for concurrent downloads
-#include <curl/curl.h>  // libcurl for HTTP/HTTPS requests
+#include <stdio.h>      
+#include <stdlib.h>     
+#include <string.h>     
+#include <pthread.h>    
+#include <curl/curl.h> 
 
 #define MAX_THREADS 8    // Maximum number of threads allowed
 
@@ -75,41 +75,44 @@ int main(int argc, char *argv[]) {
 }
 
 
-
-
-// Function to get the size of a file (in bytes) using a HEAD request
 long get_file_size(const char *url) {
-    CURL *curl = curl_easy_init();    // Create a CURL handle
-    double filesize = 0.0;            // libcurl stores size as a double
+    CURL *curl;
     CURLcode res;
+    double filesize = -1.0;
 
+    curl = curl_easy_init();
     if (curl) {
         // Set the target URL
         curl_easy_setopt(curl, CURLOPT_URL, url);
 
-        // Make a HEAD request (no body)
+        // Use HEAD request (only get headers, not file content)
         curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
 
-        // Include headers in the response (optional)
-        curl_easy_setopt(curl, CURLOPT_HEADER, 1L);
+        // Follow redirects if the URL points somewhere else
+        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
 
         // Perform the request
         res = curl_easy_perform(curl);
 
-        // If successful, retrieve the Content-Length
+        // If successful, extract file size info
         if (res == CURLE_OK) {
             curl_easy_getinfo(curl, CURLINFO_CONTENT_LENGTH_DOWNLOAD_T, &filesize);
         } else {
-            fprintf(stderr, "Error: %s\n", curl_easy_strerror(res));
-            filesize = -1;  // indicate failure
-        }    
+            // Print error message if something goes wrong
+            printf("Error: %s\n", curl_easy_strerror(res));
+        }
 
-        // Clean up and free resources
+        // Clean up CURL resources
         curl_easy_cleanup(curl);
-    }    
+    }
 
-    return (long)filesize; // Return file size (or -1 if failed)
-}    
+    // Check if file size was obtained successfully
+    if (filesize < 0)
+        printf("Error: Could not get file size\n");
+
+    return (long)filesize;
+}
+
 
 
 // Function to download a specific byte range of a file (used by each thread)
@@ -127,17 +130,20 @@ void *download_part(void *arg) {
     sprintf(range, "%ld-%ld", data->start, data->end - 1);
 
     if (curl) {
+
+        
         // Set file URL
         curl_easy_setopt(curl, CURLOPT_URL, data->url);
-
+        
         // Set output file pointer
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
-
+        
         // Use default write callback
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, NULL);
-
+        
         // Specify byte range for partial download
         curl_easy_setopt(curl, CURLOPT_RANGE, range);
+        
 
         // Perform the request
         curl_easy_perform(curl);
@@ -178,6 +184,7 @@ void merge_files(const char *filename, int num_parts) {
 
     fclose(final); // Close final merged file
 }    
+
 
 
 
