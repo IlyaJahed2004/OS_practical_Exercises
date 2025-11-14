@@ -11,6 +11,10 @@
 #define N 6
 #define M 6
 
+#define K 2
+#define L 2
+
+
 int main() {
 
     int M1[N][M];   
@@ -85,20 +89,45 @@ int main() {
             // Child process code
             printf("[Child PID %d] I am computing row %d...\n", getpid(), row);
 
-            // Later in Step 4:
-            // We will compute M2[row * M + col] here.
+            // For each column in this row
+            for (int col = 0; col < M; col++) {
 
-            exit(0);  // Child must exit so it doesn't continue loop
+                int w_max = -999999;
+                int w_min = 999999;
+
+                // Loop over KxL window
+                for (int a = 0; a < K; a++) {
+                    for (int b = 0; b < L; b++) {
+
+                        int rr = row + a;
+                        int cc = col + b;
+
+                        if (rr < 0 || rr >= N || cc < 0 || cc >= M)
+                            continue;
+
+                        int val = M1[rr][cc];
+
+                        if (val > w_max) w_max = val;
+                        if (val < w_min) w_min = val;
+                    }
+                }
+
+                //FINAL STORE after full K×L scan
+                M2[row * M + col] = w_max - w_min;
+            }
+
+            printf("[Child PID %d] Finished computing row %d\n", getpid(), row);
+            exit(0);
         }
-    }
+
+    }  
 
     // Parent waits for all children
     for (int i = 0; i < N; i++) {
         wait(NULL);
     }
-    
-    printf("All child processes finished.\n\n");
 
+    printf("All child processes finished.\n\n");
 
     return 0;
 }
