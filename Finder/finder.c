@@ -17,8 +17,7 @@ typedef struct {
 
 
 // Function prototype for directory listing
-void search_dir(const char *path);
-
+void search_dir(const char *path, const char *target);
 
 
 int main(int argc, char *argv[]) {
@@ -55,7 +54,7 @@ int main(int argc, char *argv[]) {
     printf("Target filename: %s\n", root_arg->target);
 
     //call directory listing function ---
-    search_dir(root_arg->path);
+    search_dir(root_arg->path,root_arg->target);
 
     // Free allocated memory (later this will be handled differently)
     free(root_arg->path);
@@ -64,15 +63,13 @@ int main(int argc, char *argv[]) {
     return 0;
 }
 
-void search_dir(const char *path) {
+void search_dir(const char *path, const char *target) {
 
     DIR *dir = opendir(path);
     if (!dir) {
         fprintf(stderr, "Error: cannot open directory: %s\n", path);
         return;
     }
-
-    printf("Entering directory: %s\n", path);
 
     struct dirent *entry;
 
@@ -82,21 +79,30 @@ void search_dir(const char *path) {
         if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
             continue;
 
-        printf(" - %s\n", entry->d_name);
-
         // Build full path
         char newpath[1024];
         snprintf(newpath, sizeof(newpath), "%s/%s", path, entry->d_name);
 
-        // Use stat() to check if entry is a directory
+        // Get info about the entry
         struct stat st;
-        if (stat(newpath, &st) == 0 && S_ISDIR(st.st_mode)) {
-            // This is a directory → recursive call
-            search_dir(newpath);
+        if (stat(newpath, &st) != 0)
+            continue;
+
+        //If it's a file → check match
+        if (S_ISREG(st.st_mode)) {           // Is normal file?
+            if (strcmp(entry->d_name, target) == 0) {
+                printf("FOUND: %s\n", newpath);
+            }
+        }
+
+        //If it's a directory → recurse
+        if (S_ISDIR(st.st_mode)) {
+            search_dir(newpath, target);
         }
     }
 
     closedir(dir);
 }
+
 
 
