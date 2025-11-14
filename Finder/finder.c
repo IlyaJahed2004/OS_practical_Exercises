@@ -63,6 +63,21 @@ int main(int argc, char *argv[]) {
     return 0;
 }
 
+void *thread_func(void *arg) {
+
+    thread_arg_t *targ = (thread_arg_t*) arg;
+
+    search_dir(targ->path, targ->target);
+
+    // free memory after done
+    free(targ->path);
+    free(targ);
+
+    return NULL;
+}
+
+
+
 void search_dir(const char *path, const char *target) {
 
     DIR *dir = opendir(path);
@@ -95,10 +110,21 @@ void search_dir(const char *path, const char *target) {
             }
         }
 
-        //If it's a directory → recurse
         if (S_ISDIR(st.st_mode)) {
-            search_dir(newpath, target);
+
+            // 1) allocate memory for new thread argument
+            thread_arg_t *child_arg = malloc(sizeof(thread_arg_t));
+
+            // 2) fill it
+            child_arg->path = strdup(newpath);
+            child_arg->target = target;
+
+            // 3) create a new thread
+            pthread_t tid;
+            pthread_create(&tid, NULL, thread_func, child_arg);
+
         }
+
     }
 
     closedir(dir);
