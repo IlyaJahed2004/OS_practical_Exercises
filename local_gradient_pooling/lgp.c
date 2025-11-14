@@ -2,81 +2,59 @@
 #include <stdlib.h>
 #include <time.h>
 
-#include <fcntl.h>      
-#include <sys/mman.h>   
-#include <sys/stat.h>   
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
 #include <unistd.h>
-
+#include <sys/wait.h>
 
 #define N 6
 #define M 6
 
-#define K 2
-#define L 2
-
+#define K 2   // Window height
+#define L 4   // Window width
 
 int main() {
 
-    int M1[N][M];   
+    int M1[N][M];
 
-    srand(time(NULL)); 
+    srand(time(NULL));
 
     printf("Matrix M1 (random values 1..9):\n");
 
     for (int i = 0; i < N; i++) {
         for (int j = 0; j < M; j++) {
-
-            M1[i][j] = 1 + rand() % 9; 
-
+            M1[i][j] = 1 + rand() % 9;
             printf("%d ", M1[i][j]);
-        }
-        printf("\n");
-    }
-
-    //Step 2: Create POSIX shared memory for M2
-
-    // Create shared memory object
-    int fd = shm_open("/lgp_shm", O_CREAT | O_RDWR, 0666);
-    if (fd == -1) {
-        perror("shm_open failed");
-        return 1;
-    }
-
-    // Set size of shared memory (for N*M integers)
-    size_t size = sizeof(int) * N * M;
-    if (ftruncate(fd, size) == -1) {
-        perror("ftruncate failed");
-        return 1;
-    }
-
-    //  Map shared memory into process address space
-    int *M2 = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    if (M2 == MAP_FAILED) {
-        perror("mmap failed");
-        return 1;
-    }
-
-    // Initialize M2 to all zeros
-    for (int i = 0; i < N * M; i++) {
-        M2[i] = 0;
-    }
-
-    // Print M2 to verify
-    printf("Shared memory M2 initialized to zeros:\n");
-    for (int i = 0; i < N; i++) {
-        for (int j = 0; j < M; j++) {
-            printf("%d ", M2[i * M + j]);
         }
         printf("\n");
     }
     printf("\n");
 
+    //  Determine size of output matrix M2 
+    int out_rows = (N + K - 1) / K;   // ceil(N/K)
+    int out_cols = (M + L - 1) / L;   // ceil(M/L)
 
-    // Step 3: Create child processes, one per row of the matrix
+    printf("M2 size will be %d x %d\n\n", out_rows, out_cols);
 
-    printf("Creating %d child processes...\n", N);
+    //  Shared Memory for M2 
+    int fd = shm_open("/lgp_shm", O_CREAT | O_RDWR, 0666);
+    if (fd == -1) { perror("shm_open failed"); return 1; }
 
-    for (int row = 0; row < N; row++) {
+    size_t size = sizeof(int) * out_rows * out_cols;
+    if (ftruncate(fd, size) == -1) { perror("ftruncate failed"); return 1; }
+
+    int *M2 = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (M2 == MAP_FAILED) { perror("mmap failed"); return 1; }
+
+    for (int i = 0; i < out_rows * out_cols; i++)
+        M2[i] = 0;
+
+    //  Create CHILD PROCESSES (one per row of M2) 
+
+    printf("Creating %d child processes (one per output row)...\n\n", out_rows);
+
+    for (int out_r = 0; out_r < out_rows; out_r++) {
 
         pid_t pid = fork();
 
@@ -86,48 +64,57 @@ int main() {
         }
 
         if (pid == 0) {
-            // Child process code
-            printf("[Child PID %d] I am computing row %d...\n", getpid(), row);
+            //  CHILD CODE 
+            printf("[PID %d] Processing output row %d...\n", getpid(), out_r);
 
-            // For each column in this row
-            for (int col = 0; col < M; col++) {
+            int start_r = out_r * K;
+
+            for (int out_c = 0; out_c < out_cols; out_c++) {
+
+                int start_c = out_c * L;
 
                 int w_max = -999999;
-                int w_min = 999999;
+                int w_min =  999999;
 
-                // Loop over KxL window
+                // Scan K×L window of M1
                 for (int a = 0; a < K; a++) {
                     for (int b = 0; b < L; b++) {
 
-                        int rr = row + a;
-                        int cc = col + b;
+                        int rr = start_r + a;
+                        int cc = start_c + b;
 
-                        if (rr < 0 || rr >= N || cc < 0 || cc >= M)
+                        if (rr >= N || cc >= M)
                             continue;
 
                         int val = M1[rr][cc];
-
                         if (val > w_max) w_max = val;
                         if (val < w_min) w_min = val;
                     }
                 }
 
-                //FINAL STORE after full K×L scan
-                M2[row * M + col] = w_max - w_min;
+                // Store into M2
+                M2[out_r * out_cols + out_c] = w_max - w_min;
             }
 
-            printf("[Child PID %d] Finished computing row %d\n", getpid(), row);
+            printf("[PID %d] Finished output row %d\n", getpid(), out_r);
             exit(0);
         }
-
-    }  
-
-    // Parent waits for all children
-    for (int i = 0; i < N; i++) {
-        wait(NULL);
     }
 
-    printf("All child processes finished.\n\n");
+    //  Parent waits 
+    for (int i = 0; i < out_rows; i++)
+        wait(NULL);
+
+    printf("\nAll child processes finished.\n\n");
+
+    //  PRINT M2 (Final Output)
+    printf("Final M2 (Local Gradient Pooling):\n");
+    for (int i = 0; i < out_rows; i++) {
+        for (int j = 0; j < out_cols; j++) {
+            printf("%d ", M2[i * out_cols + j]);
+        }
+        printf("\n");
+    }
 
     return 0;
 }
