@@ -1,21 +1,30 @@
-// Enable POSIX extensions (for functions like strdup, realpath, pthreads)
+// Enable POSIX extensions
 #define _XOPEN_SOURCE 700
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
-#include <dirent.h>   // opendir(), readdir(), closedir()
-#include <sys/stat.h> // stat()
+#include <dirent.h>
+#include <sys/stat.h>
+#include <semaphore.h>   // <-- NEW: semaphore
 
-// GLOBAL MUTEX for synchronized printing
+// ------------ GLOBAL OBJECTS ------------
+
+// MAX number of threads allowed to run at the same time
+#define MAX_THREADS 32
+
+// Semaphore to limit concurrency
+sem_t thread_sem;
+
+// Mutex only for synchronized printing
 pthread_mutex_t print_lock = PTHREAD_MUTEX_INITIALIZER;
 
 
-// Structure that will later be passed to each thread
+// Structure passed to each thread
 typedef struct {
-    char *path;    // Starting directory path
-    char *target;  // Target filename to search for
+    char *path;    // directory path this thread will search
+    char *target;  // filename we want to find
 } thread_arg_t;
 
 
@@ -35,6 +44,11 @@ int main(int argc, char *argv[]) {
     char *start = argv[1];
     char *target = argv[2];
 
+    // initialize semaphore
+    // MAX_THREADS threads can run concurrently
+    sem_init(&thread_sem, 0, MAX_THREADS);
+
+    //prepare root argument 
     thread_arg_t *root_arg = malloc(sizeof(thread_arg_t));
     if (!root_arg) {
         fprintf(stderr, "Out of memory\n");
@@ -47,34 +61,44 @@ int main(int argc, char *argv[]) {
         free(root_arg);
         return 1;
     }
-
     root_arg->target = target;
 
+    //start searching in the root directory
     search_dir(root_arg->path, root_arg->target);
 
+    // cleanup
     free(root_arg->path);
     free(root_arg);
+
+    // destroy semaphore
+    sem_destroy(&thread_sem);
 
     return 0;
 }
 
 
 
-// Thread entry function
+//THREAD ENTRY FUNCTION
 void *thread_func(void *arg) {
 
     thread_arg_t *targ = (thread_arg_t*) arg;
 
     search_dir(targ->path, targ->target);
 
+    // free memory for this thread's argument
     free(targ->path);
     free(targ);
+
+    // IMPORTANT: signal semaphore → a thread slot is now free
+    sem_post(&thread_sem);
 
     return NULL;
 }
 
 
 
+
+//DIRECTORY SEARCH
 void search_dir(const char *path, const char *target) {
 
     DIR *dir = opendir(path);
@@ -90,6 +114,7 @@ void search_dir(const char *path, const char *target) {
     size_t child_count = 0;
     size_t child_cap = 0;
 
+    // iterate through directory entries
     while ((entry = readdir(dir)) != NULL) {
 
         if (strcmp(entry->d_name, ".") == 0 ||
@@ -103,25 +128,37 @@ void search_dir(const char *path, const char *target) {
         if (stat(newpath, &st) != 0)
             continue;
 
-        //  FILE CHECK 
+        //  FILE 
         if (S_ISREG(st.st_mode)) {
             if (strcmp(entry->d_name, target) == 0) {
 
                 pthread_mutex_lock(&print_lock);
-                printf("FOUND: %s\n", newpath);
+                printf("Found by thread %lu: %s\n",
+                    (unsigned long)pthread_self(),
+                    newpath);
                 pthread_mutex_unlock(&print_lock);
+
             }
         }
 
-        //  DIRECTORY CHECK 
+        //  DIRECTORY 
         if (S_ISDIR(st.st_mode)) {
 
+            // Wait for permission to create a new thread
+            // If too many threads exist → waits here.
+            sem_wait(&thread_sem);
+
+            // prepare argument struct
             thread_arg_t *child_arg = malloc(sizeof(thread_arg_t));
-            if (!child_arg) continue;
+            if (!child_arg) {
+                sem_post(&thread_sem);
+                continue;
+            }
 
             child_arg->path = strdup(newpath);
             if (!child_arg->path) {
                 free(child_arg);
+                sem_post(&thread_sem);
                 continue;
             }
             child_arg->target = (char *)target;
@@ -133,10 +170,11 @@ void search_dir(const char *path, const char *target) {
                 fprintf(stderr, "pthread_create failed for %s\n", newpath);
                 free(child_arg->path);
                 free(child_arg);
+                sem_post(&thread_sem);
                 continue;
             }
 
-            // expand thread list if needed
+            // expand array if needed
             if (child_count + 1 > child_cap) {
                 size_t new_cap = (child_cap == 0 ? 8 : child_cap * 2);
                 pthread_t *tmp = realloc(child_threads, new_cap * sizeof(pthread_t));
@@ -152,7 +190,7 @@ void search_dir(const char *path, const char *target) {
         }
     }
 
-    //  JOIN CHILD THREADS 
+    //  JOIN ALL CHILD THREADS 
     for (size_t i = 0; i < child_count; i++) {
         pthread_join(child_threads[i], NULL);
     }
