@@ -7,9 +7,9 @@
 #include <pthread.h>
 #include <dirent.h>
 #include <sys/stat.h>
-#include <semaphore.h>   // <-- NEW: semaphore
+#include <semaphore.h>   
 
-// ------------ GLOBAL OBJECTS ------------
+//  GLOBAL OBJECTS 
 
 // MAX number of threads allowed to run at the same time
 #define MAX_THREADS 32
