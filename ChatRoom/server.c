@@ -13,6 +13,7 @@
 // Structure to store each client's FIFO name
 typedef struct {
     char fifo_name[256];
+    int fd;   // write fd for this client
 } Client;
 
 // Array for connected clients
@@ -65,17 +66,35 @@ int main() {
 }
 
 
-//  Definition: register client
 void register_client(const char *fifo_name) {
+
     if (client_count >= MAX_CLIENTS) {
         printf("Max clients reached.\n");
         return;
     }
 
+    // Copy FIFO name
     strcpy(clients[client_count].fifo_name, fifo_name);
-    client_count++;
+
+    // open client's FIFO for writing
+    int fd = open(fifo_name, O_WRONLY);
+    // comment: open client's FIFO to send welcome message
+
+    if (fd == -1) {
+        perror("open client fifo");
+        return;  
+    }
+
+    clients[client_count].fd = fd;
+
+    // Send WELCOME message to the client
+    const char *msg = "WELCOME\n";
+    write(fd, msg, strlen(msg));
+    // comment: send initial welcome message to client
 
     printf("Client registered: %s\n", fifo_name);
+
+    client_count++;
 }
 
 
