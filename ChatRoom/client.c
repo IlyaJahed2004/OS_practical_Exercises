@@ -100,12 +100,27 @@ int main(void) {
         return 1;
     }
 
-    // 5) main thread can be used for user input later.
-    // For now, wait until Ctrl+C (SIGINT) to exit.
-    printf("Client listener running. Press Ctrl+C to quit.\n");
+    printf("Client listener running. Type messages and press Enter.\n");
+
+    // main thread now reads user input
+    char message[512];
+
     while (running) {
-        sleep(1);
+
+        if (fgets(message, sizeof(message), stdin) == NULL)
+            continue;
+
+        // Build protocol format: MSG:<fifo>:<text>
+        char buffer[1024];
+        snprintf(buffer, sizeof(buffer), "MSG:%s:%s", my_fifo, message);
+
+        // Send to server FIFO
+        ssize_t w = write(server_fd, buffer, strlen(buffer));
+        if (w == -1) {
+            perror("write to server");
+        }
     }
+
 
     // teardown
     running = 0;

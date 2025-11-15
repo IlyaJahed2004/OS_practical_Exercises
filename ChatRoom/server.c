@@ -25,6 +25,9 @@ int server_fd = -1;
 
 //  Prototype for functions
 void register_client(const char *fifo_name);
+void broadcast_message(const char *sender_fifo, const char *message);
+void handle_message(const char *msg);
+
 void cleanup(int sig);
 
 
@@ -56,11 +59,13 @@ int main() {
     char buffer[256];
 
     while (1) {
-        int bytes = read(server_fd, buffer, sizeof(buffer));
+        int bytes = read(server_fd, buffer, sizeof(buffer)-1);
+        buffer[bytes] = '\0';
 
-        if (bytes > 0) {
-            buffer[bytes] = '\0';   // make it a string
-            register_client(buffer); // client's FIFO name
+        if (strncmp(buffer, "MSG:", 4) == 0) {
+            handle_message(buffer);
+        } else {
+            register_client(buffer);
         }
     }
 }
@@ -96,6 +101,41 @@ void register_client(const char *fifo_name) {
 
     client_count++;
 }
+
+void handle_message(const char *msg) {
+
+    // Format: MSG:<fifo>:<text>
+
+    const char *p = msg + 4;  // skip "MSG:"
+    const char *colon = strchr(p, ':');
+    if (!colon) return;
+
+    char sender_fifo[256];
+    strncpy(sender_fifo, p, colon - p);
+    sender_fifo[colon - p] = '\0';
+
+    const char *text = colon + 1;
+
+    // Build message to broadcast
+    char out[512];
+    snprintf(out, sizeof(out), "[%s] %s", sender_fifo, text);
+
+    broadcast_message(sender_fifo, out);
+}
+
+
+void broadcast_message(const char *sender_fifo, const char *message) {
+
+    for (int i = 0; i < client_count; i++) {
+
+        // skip sender
+        if (strcmp(clients[i].fifo_name, sender_fifo) == 0)
+            continue;
+
+        write(clients[i].fd, message, strlen(message));
+    }
+}
+
 
 
 //  Definition: cleanup on exit
