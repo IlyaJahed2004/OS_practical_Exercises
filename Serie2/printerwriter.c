@@ -52,11 +52,17 @@ int main()
     for (int i = 0; i < NUM_WRITERS; i++)
     {
         ids[i] = i + 1;
-        pthread_create(&writers[i], NULL, writer, &ids[i]);
+        if (pthread_create(&writers[i], NULL, writer, &ids[i]) != 0) {
+            perror("pthread_create failed");
+            exit(1);
+        }
     }
 
     for (int i = 0; i < NUM_WRITERS; i++)
-        pthread_join(writers[i], NULL);
+        if (pthread_join(writers[i], NULL) != 0) {
+            perror("pthread_join failed");
+            exit(1);
+}
 
 
 
