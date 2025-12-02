@@ -1,258 +1,171 @@
-// server.c
-// gcc -o server server.c
-// Simple FIFO chat server (named pipe). Keeps list of clients and broadcasts messages.
-
-#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
-#include <fcntl.h>
-#include <sys/stat.h>
-#include <signal.h>
 #include <string.h>
-#include <errno.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <pthread.h>
+#include <time.h>
+#include <dirent.h>
 
-#define SERVER_FIFO "/tmp/server_fifo"
 #define MAX_CLIENTS 10
+#define BUF_SIZE 256
+#define SLEEP_TIME 100000
 
-// Structure to store each client's FIFO name and write-FD
 typedef struct {
-    char fifo_name[256];
-    int fd;   // write fd for this client
+    char name[50];
+    char uuid[40];
+    char client_fifo[128];
+    char server_fifo[128];
 } Client;
 
-// global client array and counters
-static Client clients[MAX_CLIENTS];
-static int client_count = 0;
+Client clients[MAX_CLIENTS];
+int client_count = 0;
 
-static int server_fd = -1;
-static int dummy_fd = -1; // keep write-end open to avoid EOF on read
+void send_message(const char *sender, const char *uuid, const char *msg);
+void send_online(const char *sender, const char *room);
+void *client_thread(void *arg);
+void *keyboard_thread(void *arg);
 
-// prototypes
-void register_client(const char *fifo_name);
-void broadcast_message(const char *sender_fifo, const char *message);
-void handle_message(const char *msg);
-void remove_client(int index);
-void cleanup(int sig);
-int find_client_index(const char *fifo_name);
 
-int main(void) {
-    // handle signals for clean exit
-    signal(SIGINT, cleanup);
-    signal(SIGTERM, cleanup);
 
-    // remove old server FIFO if exists
-    unlink(SERVER_FIFO);
-
-    // create server FIFO
-    if (mkfifo(SERVER_FIFO, 0666) == -1) {
-        if (errno != EEXIST) {
-            perror("mkfifo");
-            return 1;
-        }
+int main(int argc, char *argv[])
+{
+    if (argc != 2) {
+        printf("Usage: ./server <room>\n");
+        return 1;
     }
 
-    printf("Server FIFO created: %s\n", SERVER_FIFO);
+    char *room = argv[1];
+    mkdir(room, 0777);
 
-    // open server FIFO for reading
-    server_fd = open(SERVER_FIFO, O_RDONLY);
-    if (server_fd == -1) {
-        perror("open server fifo (read)");
-        cleanup(0);
-    }
+    char main_fifo[128];
+    snprintf(main_fifo, sizeof(main_fifo), "%s/main_fifo", room);
 
-    // open a dummy write end so read() doesn't get EOF when no clients are connected
-    dummy_fd = open(SERVER_FIFO, O_WRONLY | O_NONBLOCK);
-    // it's okay if dummy_fd fails (no writer yet), we continue
+    mkfifo(main_fifo, 0666);
 
-    printf("Server is ready and waiting...\n");
+    printf("Chatroom '%s' started. Type \"close\" when empty to exit.\n", room);
 
-    char buffer[1024];
+    pthread_t key;
+    pthread_create(&key, NULL, keyboard_thread, NULL);
+    pthread_detach(key);
 
     while (1) {
-        ssize_t bytes = read(server_fd, buffer, sizeof(buffer) - 1);
+        int fd = open(main_fifo, O_RDONLY);
+        if (fd == -1) continue;
 
-        if (bytes > 0) {
-            buffer[bytes] = '\0';
-            // There may be multiple messages in buffer separated by newlines.
-            // Split by newline and handle each line.
-            char *saveptr = NULL;
-            char *line = strtok_r(buffer, "\n", &saveptr);
-            while (line) {
-                // ignore empty lines
-                if (line[0] != '\0') {
-                    if (strncmp(line, "MSG:", 4) == 0) {
-                        handle_message(line);
-                    } else if (strncmp(line, "QUIT:", 5) == 0) {
-                        // client asks to quit: format QUIT:/tmp/client_x_fifo
-                        const char *fifo = line + 5;
-                        int idx = find_client_index(fifo);
-                        if (idx != -1) remove_client(idx);
-                    } else {
-                        // treat as registration (fifo name)
-                        register_client(line);
-                    }
-                }
-                line = strtok_r(NULL, "\n", &saveptr);
-            }
-        } else if (bytes == 0) {
-            // read returned EOF (all writers closed). Reopen server FIFO for read.
-            close(server_fd);
-            server_fd = open(SERVER_FIFO, O_RDONLY);
-            if (server_fd == -1) {
-                perror("reopen server fifo");
-                break;
-            }
-            // re-open dummy write (optional)
-            if (dummy_fd == -1) {
-                dummy_fd = open(SERVER_FIFO, O_WRONLY | O_NONBLOCK);
-            }
-        } else {
-            if (errno == EINTR) continue;
-            perror("read server fifo");
-            break;
+        char buf[200];
+        int n = read(fd, buf, sizeof(buf) - 1);
+        if (n <= 0) {
+            close(fd);
+            continue;
         }
+        buf[n] = '\0';
+        close(fd);
+
+        char username[50], uuid[40];
+        sscanf(buf, "%49[^:]:%39s", username, uuid);
+
+        if (client_count >= MAX_CLIENTS) {
+            printf("Room full!\n");
+            continue;
+        }
+
+        Client *c = &clients[client_count++];
+        strcpy(c->name, username);
+        strcpy(c->uuid, uuid);
+
+        snprintf(c->client_fifo, sizeof(c->client_fifo), "%s/%s_client_fifo", room, uuid);
+        snprintf(c->server_fifo, sizeof(c->server_fifo), "%s/%s_server_fifo", room, uuid);
+
+        mkfifo(c->client_fifo, 0666);
+        mkfifo(c->server_fifo, 0666);
+
+        for (int i = 0; i < 50; i++) {
+            int test = open(c->server_fifo, O_WRONLY | O_NONBLOCK);
+            if (test != -1) { close(test); break; }
+            usleep(SLEEP_TIME);
+        }
+
+        send_online(c->name, room);
+
+        time_t now = time(NULL);
+        printf("[%s] Client '%s' joined.\n", strtok(ctime(&now), "\n"), username);
+
+        pthread_t t;
+        pthread_create(&t, NULL, client_thread, c);
+        pthread_detach(t);
     }
 
-    cleanup(0);
     return 0;
 }
 
 
-// find client index by fifo name, -1 if not found
-int find_client_index(const char *fifo_name) {
-    for (int i = 0; i < client_count; ++i) {
-        if (strcmp(clients[i].fifo_name, fifo_name) == 0) return i;
-    }
-    return -1;
-}
 
-
-// Register a new client: open its FIFO for writing and store fd
-void register_client(const char *fifo_name) {
-    // trim potential whitespace
-    char name[256];
-    strncpy(name, fifo_name, sizeof(name)-1);
-    name[sizeof(name)-1] = '\0';
-
-    if (find_client_index(name) != -1) {
-        printf("Client already registered: %s\n", name);
-        return;
-    }
-
-    if (client_count >= MAX_CLIENTS) {
-        printf("Max clients reached. Rejecting: %s\n", name);
-        return;
-    }
-
-    // copy name
-    strncpy(clients[client_count].fifo_name, name, sizeof(clients[client_count].fifo_name)-1);
-    clients[client_count].fifo_name[sizeof(clients[client_count].fifo_name)-1] = '\0';
-
-    // open client's FIFO for writing (blocking); this waits until client opens read-end
-    int fd = open(name, O_WRONLY);
-    if (fd == -1) {
-        perror("open client fifo (write)");
-        // do not register if cannot open
-        return;
-    }
-
-    clients[client_count].fd = fd;
-
-    // send welcome message
-    const char *msg = "WELCOME\n";
-    if (write(fd, msg, strlen(msg)) == -1) {
-        perror("write welcome");
-        // if write failed, remove client immediately
-        close(fd);
-        return;
-    }
-
-    printf("Client registered: %s (fd=%d)\n", name, fd);
-    // broadcast join message to others
-    char joinmsg[512];
-    snprintf(joinmsg, sizeof(joinmsg), "*** %s joined the chat\n", name);
-    broadcast_message(name, joinmsg);
-
-    client_count++;
-}
-
-
-// Remove client at index, closing fd and shifting array
-void remove_client(int index) {
-    if (index < 0 || index >= client_count) return;
-
-    printf("Removing client: %s\n", clients[index].fifo_name);
-    // broadcast leave message
-    char leavemsg[512];
-    snprintf(leavemsg, sizeof(leavemsg), "*** %s left the chat\n", clients[index].fifo_name);
-    broadcast_message(clients[index].fifo_name, leavemsg);
-
-    // close write fd
-    if (clients[index].fd != -1) close(clients[index].fd);
-
-    // shift left
-    for (int i = index; i < client_count - 1; ++i) {
-        clients[i] = clients[i+1];
-    }
-    client_count--;
-}
-
-
-// messages come as "MSG:<fifo>:<text>"
-void handle_message(const char *msg) {
-    const char *p = msg + 4;  // skip "MSG:"
-    const char *colon = strchr(p, ':');
-    if (!colon) return;
-
-    char sender_fifo[256];
-    size_t n = colon - p;
-    if (n >= sizeof(sender_fifo)) n = sizeof(sender_fifo)-1;
-    strncpy(sender_fifo, p, n);
-    sender_fifo[n] = '\0';
-
-    const char *text = colon + 1;
-
-    // Build message to broadcast
-    char out[1024];
-    // Keep the newline from client text if present
-    snprintf(out, sizeof(out), "[%s] %s", sender_fifo, text);
-
-    broadcast_message(sender_fifo, out);
-}
-
-
-// Broadcast message to all clients except sender
-void broadcast_message(const char *sender_fifo, const char *message) {
-    for (int i = 0; i < client_count; ++i) {
-        if (strcmp(clients[i].fifo_name, sender_fifo) == 0) continue;
-        ssize_t w = write(clients[i].fd, message, strlen(message));
-        if (w == -1) {
-            if (errno == EPIPE || errno == EBADF) {
-                // client likely disconnected; remove it
-                remove_client(i);
-                i--; // adjust loop after shift
-            } else {
-                perror("write to client");
-            }
+void send_online(const char *sender, const char *room)
+{
+    for (int i = 0; i < client_count; i++) {
+        if (strcmp(clients[i].name, sender) == 0) {
+            int fd = open(clients[i].server_fifo, O_WRONLY);
+            dprintf(fd, "[SYSTEM] Welcome %s to chat room %s! online users: %d\n",
+                    sender, room, client_count - 1);
+            close(fd);
+            return;
         }
     }
 }
 
+void send_message(const char *sender, const char *uuid, const char *msg)
+{
+    for (int i = 0; i < client_count; i++) {
+        int fd = open(clients[i].server_fifo, O_WRONLY | O_NONBLOCK);
+        if (fd == -1) continue;
 
-// cleanup: close all client fds and remove server fifo
-void cleanup(int sig) {
-    (void)sig;
-    printf("\nCleaning up server...\n");
-    if (server_fd != -1) close(server_fd);
-    if (dummy_fd != -1) close(dummy_fd);
+        if (strcmp(clients[i].uuid, uuid) == 0)
+            dprintf(fd, "You: %s\n", msg);
+        else
+            dprintf(fd, "%s: %s\n", sender, msg);
 
-    // close client fds
-    for (int i = 0; i < client_count; ++i) {
-        if (clients[i].fd != -1) close(clients[i].fd);
+        close(fd);
     }
+}
 
-    unlink(SERVER_FIFO);
-    printf("Server closed.\n");
-    exit(0);
+void *client_thread(void *arg)
+{
+    Client *c = arg;
+    char buffer[BUF_SIZE];
+
+    while (1) {
+        int fd = open(c->client_fifo, O_RDONLY);
+        if (fd == -1) { usleep(SLEEP_TIME); continue; }
+
+        int n = read(fd, buffer, sizeof(buffer) - 1);
+        close(fd);
+
+        if (n <= 0) continue;
+
+        buffer[n] = '\0';
+
+        if (strcmp(buffer, "close") == 0) {
+            printf("Client '%s' left.\n", c->name);
+            return NULL;
+        }
+
+        send_message(c->name, c->uuid, buffer);
+    }
+}
+
+void *keyboard_thread(void *arg)
+{
+    char msg[50];
+    while (1) {
+        fgets(msg, sizeof(msg), stdin);
+
+        if (strcmp(msg, "close\n") == 0 && client_count == 0) {
+            printf("Chat closed.\n");
+            exit(0);
+        } else {
+            printf("Cannot close while clients are connected.\n");
+        }
+    }
 }
