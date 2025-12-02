@@ -11,30 +11,32 @@ pthread_mutex_t forks[Fork_count];
 void* philosopher(void* arg) {
     int id = *((int*)arg);
 
-    // Even philosophers pick left then right
-    if (id % 2 == 0) {
-        pthread_mutex_lock(&forks[id]);
-        printf("Philosopher %d picked left fork %d\n", id, id);
+    while (1) {  
+        // Even philosophers pick left then right
+        if (id % 2 == 0) {
+            pthread_mutex_lock(&forks[id]);
+            printf("Philosopher %d picked left fork %d\n", id, id);
 
-        pthread_mutex_lock(&forks[(id + 4) % 5]);
-        printf("Philosopher %d picked right fork %d\n", id, (id + 4) % 5);
+            pthread_mutex_lock(&forks[(id + 4) % 5]);
+            printf("Philosopher %d picked right fork %d\n", id, (id + 4) % 5);
+        }
+        // Odd philosophers pick right then left
+        else {
+            pthread_mutex_lock(&forks[(id + 4) % 5]);
+            printf("Philosopher %d picked right fork %d\n", id, (id + 4) % 5);
+
+            pthread_mutex_lock(&forks[id]);
+            printf("Philosopher %d picked left fork %d\n", id, id);
+        }
+
+        sleep(1);
+        printf("Philosopher %d is eating.\n", id);
+
+        pthread_mutex_unlock(&forks[id]);
+        pthread_mutex_unlock(&forks[(id + 4) % 5]);
+
+        printf("Philosopher %d put down both forks number %d and %d and finished eating.\n", id, id, (id + 4) % 5);
     }
-    // Odd philosophers pick right then left
-    else {
-        pthread_mutex_lock(&forks[(id + 4) % 5]);
-        printf("Philosopher %d picked right fork %d\n", id, (id + 4) % 5);
-
-        pthread_mutex_lock(&forks[id]);
-        printf("Philosopher %d picked left fork %d\n", id, id);
-    }
-
-    sleep(1);
-    printf("Philosopher %d is eating.\n", id);
-
-    pthread_mutex_unlock(&forks[id]);
-    pthread_mutex_unlock(&forks[(id + 4) % 5]);
-
-    printf("Philosopher %d put down both forks number %d and %d and finished eating.\n", id, id,(id+4)%5);
 
     return NULL;
 }
