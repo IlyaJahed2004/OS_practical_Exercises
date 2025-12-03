@@ -92,20 +92,20 @@ void go_straight(int id, int dir){
 
     switch(dir){
         case NORTH:
-            sections_involoved[0] = 1;
-            sections_involoved[1] = 2;
-            break;
-        case EAST:
-            sections_involoved[0] = 2;
+            sections_involoved[0] = 0;
             sections_involoved[1] = 3;
             break;
+        case EAST:
+            sections_involoved[0] = 3;
+            sections_involoved[1] = 2;
+            break;
         case SOUTH:
-            sections_involoved[0] = 3; 
-            sections_involoved[1] = 0;
+            sections_involoved[0] = 2; 
+            sections_involoved[1] = 1;
             break;
         case WEST:
-            sections_involoved[0] = 0; 
-            sections_involoved[1] = 1;
+            sections_involoved[0] = 1; 
+            sections_involoved[1] = 0;
             break;
     }
 
@@ -188,9 +188,9 @@ void* car_spawner(void* args){
             dir_to_string(source),
             move_name);
         switch(move){
-            case 0: turn_right(i, source);  break;
-            case 1: go_straight(i, source); break;
-            case 2: turn_left(i, source);   break;
+            case 0: turn_right(global_id, source);  break;
+            case 1: go_straight(global_id, source); break;
+            case 2: turn_left(global_id, source);   break;
         }
     }
 }
